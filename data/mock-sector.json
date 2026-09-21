@@ -1,0 +1,29 @@
+{
+  "BBCA": {
+    "symbol": "BBCA",
+    "company_name": "Bank Central Asia Tbk",
+    "sector": "Financials",
+    "pe_ratio": 25.4,
+    "pbv": 5.2,
+    "roe": 0.22,
+    "revenue_growth": 0.12
+  },
+  "GOTO": {
+    "symbol": "GOTO",
+    "company_name": "GoTo Gojek Tokopedia Tbk",
+    "sector": "Technology",
+    "pe_ratio": -5.1,
+    "pbv": 0.8,
+    "roe": -0.15,
+    "revenue_growth": 0.25
+  },
+  "TLKM": {
+    "symbol": "TLKM",
+    "company_name": "Telkom Indonesia (Persero) Tbk",
+    "sector": "Infrastructures",
+    "pe_ratio": 14.2,
+    "pbv": 2.8,
+    "roe": 0.18,
+    "revenue_growth": 0.05
+  }
+}
