@@ -8,6 +8,24 @@
     "roe": 0.22,
     "revenue_growth": 0.12
   },
+  "BBRI": {
+    "symbol": "BBRI",
+    "company_name": "Bank Rakyat Indonesia Tbk",
+    "sector": "Financials",
+    "pe_ratio": 9.8,
+    "pbv": 2.1,
+    "roe": 0.19,
+    "revenue_growth": 0.09
+  },
+  "BMRI": {
+    "symbol": "BMRI",
+    "company_name": "Bank Mandiri Tbk",
+    "sector": "Financials",
+    "pe_ratio": 10.5,
+    "pbv": 2.3,
+    "roe": 0.20,
+    "revenue_growth": 0.10
+  },
   "GOTO": {
     "symbol": "GOTO",
     "company_name": "GoTo Gojek Tokopedia Tbk",

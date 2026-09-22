@@ -1,61 +1,145 @@
-from typing import TypedDict, Annotated, Sequence, List
+from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import BaseMessage, ToolMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.tools import tool
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
 from dotenv import load_dotenv
-import streamlit as st
+import pandas as pd
 import requests
 import os
 import json
 
 load_dotenv()
 
+MOCK_DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "mock-sector.json")
 
-class AgentState(TypedDict):
-    messages : Annotated[Sequence[BaseMessage], add_messages]
-    stock_list : List[str]
+llm = ChatGoogleGenerativeAI(
+    model = "gemini-3.5-flash-lite",
+    temperature= 0.0
+)
+
+
+class PortfolioState(TypedDict):
+    holdings: List[Dict[str, Any]] 
+    market_data: Dict[str, Any]
+    concentration_risk: str
+    peer_analysis: str
+    final_recommendation: str
     
-@tool
 def get_company_performance(ticker: str) -> str: 
-    """Use this tool to evaluate whether a specific Indonesian (IDX) stock is financially healthy for portfolio inclusion. It analyzes fundamental metrics from the Sectors API, such as profitability, debt levels, and valuation. Input must be a valid stock ticker symbol (e.g., 'BBCA')."""
+    """
+        Mengambil data fundamental saham IDX untuk keperluan analisis portofolio.
+        MODE=TESTING  -> baca dari mock-sector.json (hemat credit API).
+        MODE=PRODUCTION -> fetch langsung dari Sectors API dan di-flatten
+        ke skema yang sama persis dengan mock.
+    """
     
     mode = os.getenv("MODE")
     
     if mode == "TESTING":
-        with open("data/mock-sector.json", 'r') as f:
-            data = json.load(f)
+        with open(MOCK_DATA_PATH, "r") as f:
+            mock_data = json.load(f)
+
+        result = mock_data.get(ticker)
+        
+        if not result:
+            return {"error": f"Data mock untuk ticker {ticker} tidak ditemukan."}
+        return result
+    elif mode == "PRODUCTION":
+        
+        api = os.getenv("SECTOR_API_KEY")
+        url = "https://api.sectors.app/v2/company/report/BBCA/"
+        headers = {"Authorization": api}
+        
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            return {"error": f"Gagal mengambil data untuk {ticker}: {str(e)}"}
+        
+        # Mengambil data (key) yang diperlukan pada sector API
+        historical_list = result.get('valuation', {}).get('historical_valuation', [])
+        ratio_list = result.get('financials',{}).get('historical_financial_ratio', [])
+        future_list = result.get('future', {}).get('company_growth_forecasts', [])
+        
+        
+        return {
+            "symbol": result.get('symbol'),
+            "company_name": result.get('company_name'),
+            "sector": result['overview'].get('sector'),
+            "pe_ratio": historical_list[0].get('pe'),
+            "pbv": historical_list[0].get('pb'),
+            "roe": ratio_list[0].get('profitability', {}).get('roe', 'N/A'),
+            "revenue_growth": future_list[0].get('revenue_growth')
+        }
+
     else:
-        return "Akan melakukan request API asli"
+        return {"error": "MODE tidak valid. Set MODE=TESTING atau MODE=PRODUCTION di .env"}
     
-    hasil = data.get(ticker)
-    
-    if not hasil:
-        return f"Data untuk ticker {ticker} tidak ditemukan dalam database."
-    
-    template_result = {
-        "Symbol":hasil['symbol'],
-        "Company_name":hasil['company_name'],
-        "Sector":hasil['sector'],
-        "PE Ratio":hasil['pe_ratio'],
-        "PBV":hasil['pbv'],
-        "ROE":hasil['roe'],
-        "Revenue growth":hasil['revenue_growth']
-    }
-    
-    return str(template_result)
 
-tools = [get_company_performance]
-llm = ChatGoogleGenerativeAI(
-    model = "gemini-3.5-flash-lite",
-    temperature= 0.0
-).bind_tools(tools)
 
-def agen_node(state: AgentState) -> AgentState:
-    system_prompt = SystemMessage(content="""
-    You are an expert Financial Analyst AI specialized in the Indonesian Stock Market (IDX). Your primary objective is to analyze stock portfolios, evaluate financial health, and provide data-driven investment insights.
+def data_fetcher_node(state: PortfolioState) -> PortfolioState:
+    
+    market_data_results = {}
+ 
+    holdings = state["holdings"]
+    
+    for item in holdings:
+        ticker = item["ticker"]
+        data_saham = get_company_performance(ticker)
+        market_data_results[ticker] = data_saham
+
+    return {"market_data": market_data_results}
+
+
+
+def risk_assessor_node(state: PortfolioState) -> PortfolioState:
+    # 1. Ambil data dari state
+    market_data = state.get("market_data", {})
+
+    # 2. Siapkan prompt untuk Gemini (LLM)
+    system_prompt = """Kamu adalah analis risiko portofolio saham. 
+    Tugasmu: Evaluasi apakah portofolio ini terlalu terkonsentrasi pada satu sektor tertentu berdasarkan data market berikut. 
+    Berikan jawaban singkat tentang risiko sektoralnya."""
+
+    # Gabungkan prompt dengan data market_data (ubah ke string agar bisa dibaca LLM)
+    pesan = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Data Portofolio: {json.dumps(market_data)}")
+    ]
+
+
+    response = llm.invoke(pesan)
+
+    return {"concentration_risk": response.content}
+
+
+
+def peer_analyzer_node(state: PortfolioState) -> PortfolioState:
+    market_data = state.get("market_data", {})
+    
+    system_prompt = """Kamu adalah Analis Valuasi Saham. 
+    Tugasmu: Evaluasi valuasi saham-saham berikut berdasarkan metrik PE Ratio dan PBV yang ada di data. 
+    Berikan analisis singkat apakah saham tersebut tergolong undervalued (murah) atau overvalued (mahal/premium)."""
+
+    pesan = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Data Fundamental: {json.dumps(market_data)}")
+    ]
+
+    response = llm.invoke(pesan)
+
+    return {"peer_analysis": response.content}
+
+
+def adviser_node(state: PortfolioState) -> PortfolioState:
+  
+    
+    # Ambil semua data dari node sebelumnya
+    holdings = state.get("holdings", [])
+    risiko = state.get("concentration_risk", "")
+    valuasi = state.get("peer_analysis", "")
+    
+    system_prompt = """You are an expert Financial Analyst AI specialized in the Indonesian Stock Market (IDX). Your primary objective is to analyze stock portfolios, evaluate financial health, and provide data-driven investment insights.
 
     You operate within a system where all financial data, stock prices, company fundamentals, and market news are strictly provided to you by the Sectors API. 
 
@@ -79,57 +163,56 @@ def agen_node(state: AgentState) -> AgentState:
     - ⚠️ Risk Factors (Potential downsides based on the data)
     - 💡 Conclusion (Final objective thought)
 
-    [SYSTEM CONTEXT ENDS HERE. AWAITING USER QUERY AND SECTORS DATA]
+    [SYSTEM CONTEXT ENDS HERE. AWAITING USER QUERY AND SECTORS DATA]"""
+    
+    # Gabungkan semua konteks agar LLM bisa mengambil keputusan final
+    konteks = f"""
+    Portofolio Saat Ini: {json.dumps(holdings)}
+    Evaluasi Risiko Sektoral: {risiko}
+    Evaluasi Valuasi (Peer): {valuasi}
+    """
+    
+    pesan = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=konteks)
+    ]
+    
+    response = llm.invoke(pesan)
+    teks_final = "\n"
+    
+    hasil_teks = response.content
+    if isinstance(hasil_teks, list):
+        for block in response.content:
+            if isinstance(block, dict) and 'text' in block:
+                teks_final += block['text']
+    else:
+        teks_final = str(hasil_teks)         
+        # hasil_teks = "".join([block.get("text", "") for block in response.content if isinstance(block, dict)])
         
-    """)
-    
-    if not state["messages"]:
-        print("\nAI: I'm ready to be your smart portofolio rebalancing assistant ")
-        
-    
-    all_message = [system_prompt] + list(state['messages'])
-    response = llm.invoke(all_message)
-    
-    return {"messages": [response]}
+    return {"final_recommendation": teks_final}
 
-builder = StateGraph(AgentState)
+builder = StateGraph(PortfolioState)
 
-builder.add_node("agent", agen_node)
-tool_node = ToolNode(tools=tools) 
-builder.add_node("tools", tool_node)
-builder.add_edge(START, "agent")
-
-builder.add_conditional_edges(
-    "agent",
-    tools_condition
-)
-
-builder.add_edge("tools", "agent")
+builder.add_node("fetcher", data_fetcher_node)
+builder.add_node("risk_assessor", risk_assessor_node)
+builder.add_node("peer_analyzer", peer_analyzer_node)
+builder.add_node("adviser", adviser_node)
+builder.add_edge(START, "fetcher")
+builder.add_edge("fetcher", "risk_assessor")
+builder.add_edge("risk_assessor", "peer_analyzer")
+builder.add_edge("peer_analyzer", "adviser")
+builder.add_edge("adviser", END)
 
 graph = builder.compile()
 
+intial_state = {
+    "holdings": [
+        {"ticker": "BBCA", "jumlah": 100, "harga_rata": 9500},
+        {"ticker": "GOTO", "jumlah": 50000, "harga_rata": 60}
+    ]
+}
 
-if __name__ == "__main__":
-    # user = input("\nUSER: ")
-    initial_state = {
-        "messages": [
-            HumanMessage(content="Tolong analisis kesehatan finansial saham BBCA untuk portofolio saya.")
-        ]
-    }
-    
-    print("🤖 Memulai AI Agent Smart Portfolio Rebalancing...")
-    print("-" * 50)
-    
-    result = graph.invoke(initial_state)
-    
-    print("\n--- HASIL EKSEKUSI AGEN ---")
-    for message in result["messages"]:
-        if isinstance(message, HumanMessage):
-            print(f"\n👤 USER:\n{message.content}")
-        elif isinstance(message, AIMessage):
-            if isinstance(message.content, list):
-                for item in message.content:
-                    if isinstance(item, dict) and 'text' in item:    
-                        print(f"\n🤖 AI AGENT:\n{item['text']}")
-        elif isinstance(message, ToolMessage):
-            print(f"\n⚙️ [TOOL RESPONSE - SECTORS API MOCK]:\n{message.content}")
+result = graph.invoke(intial_state,{"recursion_limit": 10})
+
+print("--- EKSEKUSI ADVISER (FINAL) ---")
+print(result.get("final_recommendation"))
