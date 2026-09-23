@@ -7,6 +7,7 @@ import pandas as pd
 import requests
 import os
 import json
+import streamlit as st
 
 load_dotenv()
 
@@ -91,6 +92,18 @@ def data_fetcher_node(state: PortfolioState) -> PortfolioState:
     return {"market_data": market_data_results}
 
 
+def extract_text_content(content) -> str:
+    """
+    Menyeragamkan response.content dari Gemini jadi string biasa.
+    Kadang balik string langsung, kadang list of content blocks
+    (ada metadata signature/extras yang perlu difilter).
+    """
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") for block in content if isinstance(block, dict)
+        )
+    return str(content)
+
 
 def risk_assessor_node(state: PortfolioState) -> PortfolioState:
     # 1. Ambil data dari state
@@ -109,8 +122,7 @@ def risk_assessor_node(state: PortfolioState) -> PortfolioState:
 
 
     response = llm.invoke(pesan)
-
-    return {"concentration_risk": response.content}
+    return {"concentration_risk": extract_text_content(response.content)}
 
 
 
@@ -127,8 +139,7 @@ def peer_analyzer_node(state: PortfolioState) -> PortfolioState:
     ]
 
     response = llm.invoke(pesan)
-
-    return {"peer_analysis": response.content}
+    return {"peer_analysis": extract_text_content(response.content)}
 
 
 def adviser_node(state: PortfolioState) -> PortfolioState:
@@ -161,7 +172,7 @@ def adviser_node(state: PortfolioState) -> PortfolioState:
     - 📊 Executive Summary (Brief overview of the stock/portfolio health)
     - 📈 Fundamental Analysis (Breakdown of key metrics provided)
     - ⚠️ Risk Factors (Potential downsides based on the data)
-    - 💡 Conclusion (Final objective thought)
+    - 💡 Conclusion (Final objective thought (BUY/SELL/HOLD))
 
     [SYSTEM CONTEXT ENDS HERE. AWAITING USER QUERY AND SECTORS DATA]"""
     
@@ -178,18 +189,8 @@ def adviser_node(state: PortfolioState) -> PortfolioState:
     ]
     
     response = llm.invoke(pesan)
-    teks_final = "\n"
-    
-    hasil_teks = response.content
-    if isinstance(hasil_teks, list):
-        for block in response.content:
-            if isinstance(block, dict) and 'text' in block:
-                teks_final += block['text']
-    else:
-        teks_final = str(hasil_teks)         
-        # hasil_teks = "".join([block.get("text", "") for block in response.content if isinstance(block, dict)])
-        
-    return {"final_recommendation": teks_final}
+    return {"final_recommendation": extract_text_content(response.content)}       
+
 
 builder = StateGraph(PortfolioState)
 
@@ -205,14 +206,18 @@ builder.add_edge("adviser", END)
 
 graph = builder.compile()
 
-intial_state = {
-    "holdings": [
-        {"ticker": "BBCA", "jumlah": 100, "harga_rata": 9500},
-        {"ticker": "GOTO", "jumlah": 50000, "harga_rata": 60}
-    ]
-}
+if __name__ == "__main__":
+    intial_state = {
+        "holdings": [
+            {"ticker": "BBCA", "jumlah": 6000, "harga_rata": 6500},
+            {"ticker": "GOTO", "jumlah": 25, "harga_rata": 50},
+            {"ticker": "BBRI", "jumlah": 1000, "harga_rata": 3500},
+            {"ticker": "BMRI", "jumlah": 2000, "harga_rata": 4460},
+            {"ticker": "TLKM", "jumlah": 500, "harga_rata": 2500}
+            
+        ]
+    }
+    result = graph.invoke(intial_state, {"recursion_limit": 10})
+    print(result.get("final_recommendation"))
 
-result = graph.invoke(intial_state,{"recursion_limit": 10})
 
-print("--- EKSEKUSI ADVISER (FINAL) ---")
-print(result.get("final_recommendation"))
