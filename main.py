@@ -1,8 +1,9 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Dict, Any, Literal
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 import pandas as pd
 import requests
 import os
@@ -13,18 +14,32 @@ load_dotenv()
 
 MOCK_DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "mock-sector.json")
 
-llm = ChatGoogleGenerativeAI(
-    model = "gemini-3.5-flash-lite",
-    temperature= 0.0
-)
-
-
 class PortfolioState(TypedDict):
     holdings: List[Dict[str, Any]] 
     market_data: Dict[str, Any]
     concentration_risk: str
     peer_analysis: str
     final_recommendation: str
+    structured_recommendations: List[Dict[str, Any]]
+    
+class StockAction(BaseModel):
+    ticker: str = Field(description="Kode ticker saham, contoh: BBCA")
+    action: Literal["Buy", "Sell", "Hold"] = Field(description="Rekomendasi aksi untuk saham ini")
+    alasan_singkat: str = Field(description="Alasan singkat dalam satu kalimat")
+
+class StructuredRecommendation(BaseModel):
+    recommendations: List[StockAction] = Field(description="Daftar rekomendasi aksi untuk tiap saham di portofolio")
+    
+
+llm = ChatGoogleGenerativeAI(
+    model = "gemini-3.5-flash-lite",
+    temperature= 0.0
+)
+
+structured_llm = ChatGoogleGenerativeAI(
+    model="gemini-3.5-flash-lite",
+    temperature=0.0
+).with_structured_output(StructuredRecommendation)  
     
 def get_company_performance(ticker: str) -> str: 
     """
@@ -48,12 +63,16 @@ def get_company_performance(ticker: str) -> str:
     elif mode == "PRODUCTION":
         
         api = os.getenv("SECTOR_API_KEY")
-        url = "https://api.sectors.app/v2/company/report/BBCA/"
+        if not api:
+            return {"error": "SECTOR_API_KEY tidak ditemukan di environment variable (.env)"}
+        
+        url = f"https://api.sectors.app/v2/company/report/{ticker}/"
         headers = {"Authorization": api}
         
         try:
             response = requests.get(url, headers=headers)
             response.raise_for_status()
+            result = response.json()
         except requests.exceptions.RequestException as e:
             return {"error": f"Gagal mengambil data untuk {ticker}: {str(e)}"}
         
@@ -61,20 +80,26 @@ def get_company_performance(ticker: str) -> str:
         historical_list = result.get('valuation', {}).get('historical_valuation', [])
         ratio_list = result.get('financials',{}).get('historical_financial_ratio', [])
         future_list = result.get('future', {}).get('company_growth_forecasts', [])
-        
+       
+       # Ambil elemen pertama secara AMAN (jika list tidak kosong)
+        first_historical = historical_list[0] if historical_list else {}
+        first_ratio = ratio_list[0] if ratio_list else {}
+        first_future = future_list[0] if future_list else {}
         
         return {
             "symbol": result.get('symbol'),
             "company_name": result.get('company_name'),
-            "sector": result['overview'].get('sector'),
-            "pe_ratio": historical_list[0].get('pe'),
-            "pbv": historical_list[0].get('pb'),
-            "roe": ratio_list[0].get('profitability', {}).get('roe', 'N/A'),
-            "revenue_growth": future_list[0].get('revenue_growth')
+            "sector": result.get('overview', {}).get('sector', 'N/A'),
+            "pe_ratio": first_historical.get('pe', 'N/A'),
+            "pbv": first_historical.get('pb', 'N/A'),
+            "roe": first_ratio.get('profitability', {}).get('roe', 'N/A'),
+            "revenue_growth": first_future.get('revenue_growth', 'N/A')
         }
 
     else:
         return {"error": "MODE tidak valid. Set MODE=TESTING atau MODE=PRODUCTION di .env"}
+    
+
     
 
 
@@ -189,7 +214,36 @@ def adviser_node(state: PortfolioState) -> PortfolioState:
     ]
     
     response = llm.invoke(pesan)
-    return {"final_recommendation": extract_text_content(response.content)}       
+    return {"final_recommendation": extract_text_content(response.content)} 
+
+def structured_recommender_node(state: PortfolioState) -> PortfolioState:
+    holdings = state.get("holdings", [])
+    risiko = state.get("concentration_risk", "")
+    valuasi = state.get("peer_analysis", "")
+
+    system_prompt = """Kamu adalah Manajer Portofolio Saham.
+    Berdasarkan evaluasi risiko sektoral dan valuasi yang diberikan, tentukan rekomendasi
+    aksi (Beli, Jual, atau Tahan) untuk SETIAP saham dalam portofolio, beserta alasan
+    singkat (1 kalimat) per saham."""
+
+    konteks = f"""
+    Portofolio Saat Ini: {json.dumps(holdings)}
+    Evaluasi Risiko Sektoral: {risiko}
+    Evaluasi Valuasi (Peer): {valuasi}
+    """
+
+    pesan = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=konteks)
+    ]
+
+    try:
+        result: StructuredRecommendation = structured_llm.invoke(pesan)
+        recs = [r.model_dump() for r in result.recommendations]
+    except Exception as e:
+        recs = []  # fallback aman kalau LLM gagal ikutin skema
+
+    return {"structured_recommendations": recs}        
 
 
 builder = StateGraph(PortfolioState)
@@ -197,12 +251,17 @@ builder = StateGraph(PortfolioState)
 builder.add_node("fetcher", data_fetcher_node)
 builder.add_node("risk_assessor", risk_assessor_node)
 builder.add_node("peer_analyzer", peer_analyzer_node)
+builder.add_node("structured_recommender", structured_recommender_node)
 builder.add_node("adviser", adviser_node)
+
+
 builder.add_edge(START, "fetcher")
 builder.add_edge("fetcher", "risk_assessor")
 builder.add_edge("risk_assessor", "peer_analyzer")
 builder.add_edge("peer_analyzer", "adviser")
+builder.add_edge("peer_analyzer", "structured_recommender")
 builder.add_edge("adviser", END)
+builder.add_edge("structured_recommender", END)
 
 graph = builder.compile()
 
