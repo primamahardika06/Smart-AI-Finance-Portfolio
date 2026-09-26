@@ -5,14 +5,21 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+from io import StringIO, BytesIO
 import requests
 import os
 import json
 import streamlit as st
+import time
 
 load_dotenv()
 
 MOCK_DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "mock-sector.json")
+
+                    
 
 class PortfolioState(TypedDict):
     holdings: List[Dict[str, Any]] 
@@ -278,5 +285,98 @@ if __name__ == "__main__":
     }
     result = graph.invoke(intial_state, {"recursion_limit": 10})
     print(result.get("final_recommendation"))
+    
+
+def build_report(result: dict) -> bytes:
+    holdings = result.get("holdings", [])
+    market_data = result.get("market_data", {})
+    structured_recs = result.get("structured_recommendations", [])
+    actions_map = {rec["ticker"]: rec for rec in structured_recs}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Portfolio Report"
+
+    # Judul
+    ws.merge_cells("A1:I1")
+    ws["A1"] = "SMART PORTFOLIO REBALANCING REPORT"
+    ws["A1"].font = Font(size=14, bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill(start_color="1F2933", end_color="1F2933", fill_type="solid")
+    ws["A1"].alignment = Alignment(vertical="center")
+    ws.row_dimensions[1].height = 26
+
+    # Ringkasan risiko
+    ws.merge_cells("A2:I2")
+    ws["A2"] = str(result.get("concentration_risk", "-")).replace("\n", " ")
+    ws["A2"].font = Font(italic=True, color="555555")
+    ws["A2"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[2].height = 40
+
+    headers = ["Ticker", "Harga Rata-rata", "Jumlah Lot", "Sector",
+               "PE Ratio", "PBV", "ROE", "Rekomendasi", "Alasan"]
+    header_row = 4
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="374151", end_color="374151", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center")
+
+    action_colors = {"Beli": "C6F6D5", "Buy": "C6F6D5",
+                      "Tahan": "FEF3C7", "Hold": "FEF3C7",
+                      "Jual": "FECACA", "Sell": "FECACA"}
+
+    row_idx = header_row + 1
+    for item in holdings:
+        ticker = item["ticker"]
+        data = market_data.get(ticker, {})
+        rec = actions_map.get(ticker, {})
+        action = rec.get("action", "N/A")
+
+        values = [ticker, item.get("harga_rata"), item.get("jumlah"),
+                  data.get("sector"), data.get("pe_ratio"), data.get("pbv"),
+                  data.get("roe"), action, rec.get("alasan_singkat", "-")]
+
+        for col_idx, val in enumerate(values, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            if col_idx == 8 and action in action_colors:
+                cell.fill = PatternFill(start_color=action_colors[action],
+                                         end_color=action_colors[action], fill_type="solid")
+                cell.font = Font(bold=True)
+        row_idx += 1
+
+    widths = [10, 14, 12, 14, 10, 8, 8, 12, 45]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def get_bar_color(persen: float) -> str:
+    """Tentukan warna bar berdasarkan besar alokasi."""
+    if persen >= 50:
+        return "#0adb3a"   # hijau
+    elif persen >= 30:
+        return "#d3b015"   # kuning
+    else:
+        return "#d20c1d"   # merah
+
+
+
+def render_colored_bar(label: str, persen: float):
+    """Render satu baris bar chart custom (ticker + persentase + bar berwarna)."""
+    color = get_bar_color(persen)
+    st.markdown(f"""
+        <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px">
+                <span><b>{label}</b></span>
+                <span>{persen:.0f}%</span>
+            </div>
+            <div style="background:#e5e5e5;border-radius:6px;height:10px;width:100%">
+                <div style="background:{color};width:{min(persen, 100):.1f}%;height:10px;border-radius:6px"></div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 

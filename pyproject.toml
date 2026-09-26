@@ -8,5 +8,6 @@ dependencies = [
     "langchain>=1.4.2",
     "langchain-google-genai>=4.4.0",
     "langgraph>=1.2.11",
+    "openpyxl>=3.1.5",
     "pydantic>=2.13.5",
 ]
