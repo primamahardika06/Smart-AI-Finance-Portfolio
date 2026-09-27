@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+#For testing
+api_call_test.py
