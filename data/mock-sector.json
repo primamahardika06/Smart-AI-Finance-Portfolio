@@ -6,7 +6,9 @@
     "pe_ratio": 25.4,
     "pbv": 5.2,
     "roe": 0.22,
-    "revenue_growth": 0.12
+    "revenue_growth": 0.12,
+    "last_close_price": 6175,
+    "latest_close_date": "2026-07-08"
   },
   "BBRI": {
     "symbol": "BBRI",
@@ -15,7 +17,9 @@
     "pe_ratio": 9.8,
     "pbv": 2.1,
     "roe": 0.19,
-    "revenue_growth": 0.09
+    "revenue_growth": 0.09,
+    "last_close_price": 4120,
+    "latest_close_date": "2026-07-08"
   },
   "BMRI": {
     "symbol": "BMRI",
@@ -24,7 +28,9 @@
     "pe_ratio": 10.5,
     "pbv": 2.3,
     "roe": 0.20,
-    "revenue_growth": 0.10
+    "revenue_growth": 0.10,
+    "last_close_price": 5450,
+    "latest_close_date": "2026-07-08"
   },
   "GOTO": {
     "symbol": "GOTO",
@@ -33,7 +39,9 @@
     "pe_ratio": -5.1,
     "pbv": 0.8,
     "roe": -0.15,
-    "revenue_growth": 0.25
+    "revenue_growth": 0.25,
+    "last_close_price": 62,
+    "latest_close_date": "2026-07-08"
   },
   "TLKM": {
     "symbol": "TLKM",
@@ -42,6 +50,8 @@
     "pe_ratio": 14.2,
     "pbv": 2.8,
     "roe": 0.18,
-    "revenue_growth": 0.05
+    "revenue_growth": 0.05,
+    "last_close_price": 2890,
+    "latest_close_date": "2026-07-08"
   }
 }

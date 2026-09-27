@@ -31,7 +31,7 @@ class PortfolioState(TypedDict):
     
 class StockAction(BaseModel):
     ticker: str = Field(description="Kode ticker saham, contoh: BBCA")
-    action: Literal["Buy", "Sell", "Hold"] = Field(description="Rekomendasi aksi untuk saham ini")
+    action: Literal["Jual", "Beli", "Tahan"] = Field(description="Rekomendasi aksi untuk saham ini")
     alasan_singkat: str = Field(description="Alasan singkat dalam satu kalimat")
 
 class StructuredRecommendation(BaseModel):
@@ -100,7 +100,9 @@ def get_company_performance(ticker: str) -> str:
             "pe_ratio": first_historical.get('pe', 'N/A'),
             "pbv": first_historical.get('pb', 'N/A'),
             "roe": first_ratio.get('profitability', {}).get('roe', 'N/A'),
-            "revenue_growth": first_future.get('revenue_growth', 'N/A')
+            "revenue_growth": first_future.get('revenue_growth', 'N/A'),
+            "last_close_price": result.get('overview', {}).get('last_close_price','N/A'),
+            "latest_close_date": result.get('overview', {}).get('latest_close_date','N/A')
         }
 
     else:
@@ -179,38 +181,41 @@ def adviser_node(state: PortfolioState) -> PortfolioState:
     
     # Ambil semua data dari node sebelumnya
     holdings = state.get("holdings", [])
+    market_data = state.get("market_data", {})
     risiko = state.get("concentration_risk", "")
     valuasi = state.get("peer_analysis", "")
     
-    system_prompt = """You are an expert Financial Analyst AI specialized in the Indonesian Stock Market (IDX). Your primary objective is to analyze stock portfolios, evaluate financial health, and provide data-driven investment insights.
+    system_prompt = """Anda adalah AI Analis Keuangan ahli yang berspesialisasi dalam Pasar Saham Indonesia (IDX). Tujuan utama Anda adalah menganalisis portofolio saham, mengevaluasi kesehatan keuangan, dan memberikan wawasan investasi berbasis data.
 
-    You operate within a system where all financial data, stock prices, company fundamentals, and market news are strictly provided to you by the Sectors API. 
+    Anda beroperasi dalam sistem di mana semua data keuangan, harga saham, fundamental perusahaan, dan berita pasar disediakan secara ketat untuk Anda oleh Sectors API.
 
-    CORE RULES & CONSTRAINTS:
-    1. STRICT DATA RELIANCE: You must base your entire analysis ONLY on the raw data (JSON/text) provided in the user prompt. 
-    2. NO HALLUCINATION: DO NOT invent, guess, or pull external financial figures, historical prices, or news that are not present in the provided data. If a metric is missing, explicitly state: "Data for [metric] is not available in the current Sectors API context."
-    3. OBJECTIVITY: Provide unbiased, analytical, and professional insights. Focus on fundamental analysis, valuation, and trend identification.
-    4. DISCLAIMER: Always maintain a professional boundary. Remind the user that your analysis is for informational purposes and does not constitute direct financial advice.
+    ATURAN & BATASAN UTAMA:
+    1. KETERGANTUNGAN DATA YANG KETAT: Anda harus mendasarkan seluruh analisis HANYA pada data mentah (JSON/teks) yang disediakan dalam *prompt* pengguna.
+    2. TANPA HALUSINASI: JANGAN mengarang, menebak, atau mengambil angka keuangan eksternal, harga historis, atau berita yang tidak ada dalam data yang disediakan. Jika suatu metrik tidak tersedia, nyatakan secara eksplisit: "Data untuk [metrik] tidak tersedia dalam konteks Sectors API saat ini."
+    3. OBJEKTIVITAS: Berikan wawasan yang tidak memihak, analitis, dan profesional. Fokuslah pada analisis fundamental, valuasi, dan identifikasi tren.
+    4. SANGKALAN (DISCLAIMER): Selalu jaga batasan profesional. Ingatkan pengguna bahwa analisis Anda ditujukan untuk tujuan informasi dan bukan merupakan saran keuangan langsung.
 
-    WORKFLOW INSTRUCTIONS:
-    When receiving a user query and the accompanying Sectors API data:
-    - Step 1: Digest the provided financial metrics (e.g., Revenue, Net Income, P/E Ratio, PBV).
-    - Step 2: Compare the metrics against industry standards or historical performance if the data allows.
-    - Step 3: Identify key strengths (bullish factors) and weaknesses/risks (bearish factors) from the data.
-    - Step 4: Synthesize a clear, actionable summary.
+    INSTRUKSI ALUR KERJA:
+    Saat menerima pertanyaan pengguna dan data Sectors API yang menyertainya:
+    - Langkah 1: Pahami metrik keuangan yang disediakan (misalnya, Pendapatan, Laba Bersih, Rasio P/E, PBV).
+    - Langkah 2: Bandingkan metrik tersebut dengan standar industri atau kinerja historis jika data memungkinkan.
+    - Langkah 3: Identifikasi kekuatan utama (faktor *bullish*) dan kelemahan/risiko (faktor *bearish*) dari data tersebut.
+    - Langkah 4: Susun ringkasan yang jelas dan dapat ditindaklanjuti.
 
-    OUTPUT FORMAT:
-    Unless the user specifies otherwise, structure your analysis using Markdown with the following sections:
-    - 📊 Executive Summary (Brief overview of the stock/portfolio health)
-    - 📈 Fundamental Analysis (Breakdown of key metrics provided)
-    - ⚠️ Risk Factors (Potential downsides based on the data)
-    - 💡 Conclusion (Final objective thought (BUY/SELL/HOLD))
+    FORMAT OUTPUT:
+    Kecuali pengguna menentukan lain, susun analisis Anda menggunakan Markdown dengan bagian-bagian berikut:
+    - 💲 Harga AKhir Penutupan Market (Memberikan informasi terkait close price dan close date nya (DD/MM/YYYY))
+    - 📊 Ringkasan Eksekutif (Gambaran singkat kesehatan saham/portofolio)
+    - 📈 Analisis Fundamental (Rincian metrik utama yang disediakan)
+    - ⚠️ Faktor Risiko (Potensi penurunan berdasarkan data)
+    - 💡 Kesimpulan (Pemikiran objektif akhir (BELI/JUAL/TAHAN))
 
-    [SYSTEM CONTEXT ENDS HERE. AWAITING USER QUERY AND SECTORS DATA]"""
+    [KONTEKS SISTEM BERAKHIR DI SINI. MENUNGGU PERTANYAAN PENGGUNA] DAN DATA SEKTOR]"""
     
     # Gabungkan semua konteks agar LLM bisa mengambil keputusan final
     konteks = f"""
     Portofolio Saat Ini: {json.dumps(holdings)}
+    Data Fundamental & Harga Pasar (Sectors API): {json.dumps(market_data)}
     Evaluasi Risiko Sektoral: {risiko}
     Evaluasi Valuasi (Peer): {valuasi}
     """
@@ -354,13 +359,9 @@ def build_report(result: dict) -> bytes:
 
 
 def get_bar_color(persen: float) -> str:
-    """Tentukan warna bar berdasarkan besar alokasi."""
-    if persen >= 50:
-        return "#0adb3a"   # hijau
-    elif persen >= 30:
-        return "#d3b015"   # kuning
-    else:
-        return "#d20c1d"   # merah
+    """Tentukan warna bar"""
+    return "#061ef6"   # hijau
+
 
 
 
